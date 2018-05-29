@@ -16,4 +16,9 @@ Example:
     )
 ```
 
-Can also be used as a generator for lazily reading data
+Can also be used as an iterator/generator for lazily reading data
+
+```python
+>>> for timepoint in data:
+>>>     print(timepoint.shape)
+```
