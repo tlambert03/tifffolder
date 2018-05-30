@@ -120,17 +120,17 @@ class TiffFolder(object):
             if isinstance(idx, slice):
                 return slice_to_iterable(idx, length)
             if isinstance(idx, int):
-                if idx < 0 : #Handle negative indices
+                if idx < 0:  # Handle negative indices
                     idx += length
-                if idx < 0 or idx >= length :
+                if idx < 0 or idx >= length:
                     raise IndexError("The index (%d) is out of range." % idx)
                 return idx
 
         if isinstance(key, tuple):
             keys = tuple(handle_idx(*i) for i in zip(key, self.shape[:len(key)]))
             t, c, z, y, x = keys + (None,) * (5 - len(key))
-        elif isinstance(key, (slice, int)) :
-            #Get the start, stop, and step from the slice
+        elif isinstance(key, (slice, int)):
+            # Get the start, stop, and step from the slice
             t = handle_idx(key, self.shape[0])
         else:
             raise TypeError("Invalid argument type.")
@@ -140,8 +140,8 @@ class TiffFolder(object):
     @property
     def shape(self):
         if not hasattr(self, '_shape'):
-            ch = [search('(?<=' + self.cpattern.format(')(\\d+)(?=')
-                            + ')', f) for f in self.flist]
+            ch = [search('(?<=' + self.cpattern.format(')(\\d+)(?=') +
+                  ')', f) for f in self.flist]
             cnt = Counter([i.group() for i in ch if i])
             assert len(cnt), 'No matching tiff files found'
             if not len(set(cnt.values())) == 1:

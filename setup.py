@@ -1,16 +1,17 @@
 from setuptools import setup
 
-with open('.tiffolder.py') as f:
+with open('tifffolder/__init__.py') as f:
     exec(f.read())
 
 setup(
     name='tifffolder',
     version=__version__,
-    description='Read/slice a folder of images like a numpy array',
+    description='Lazily read/slice a folder of images like a numpy array',
     author='Talley Lambert',
     author_email='talley.lambert@gmail.com',
     url='https://github.com/tlambert03/tifffolder',
     license='MIT',
+    keywords=['image', 'analysis', 'tiff'],
     classifiers=[
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: MIT License',
