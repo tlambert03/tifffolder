@@ -1,10 +1,13 @@
 from setuptools import setup
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
 
 setup(
     name='tifffolder',
-    version='0.1.0',
+    version='0.1.1',
     description='Lazily read/slice a folder of images like a numpy array',
+    long_description=long_description,
     author='Talley Lambert',
     author_email='talley.lambert@gmail.com',
     url='https://github.com/tlambert03/tifffolder',
