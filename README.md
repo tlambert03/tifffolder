@@ -12,13 +12,17 @@ Example:
 
 >>> data = tf[0:100:10, 0, -10:, 200:400, :]
 >>> data.shape
-(10, 1, 10, 200, 512)   # (nt, nc, nz, ny, nx
-    )
+(10, 1, 10, 200, 512)   # (nt, nc, nz, ny, nx)
+
 ```
 
 Can also be used as an iterator/generator for lazily reading data
 
 ```python
->>> for timepoint in data:
->>>     print(timepoint.shape)
+>>> for timepoint in tf:
+>>>     do_something(timepoint)
+     
+# or just load the whole thing
+>>> alldata = tf[:]
+
 ```

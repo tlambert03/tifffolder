@@ -5,9 +5,10 @@ with open("README.md", "r") as fh:
 
 setup(
     name='tifffolder',
-    version='0.1.1',
+    version='0.1.0',
     description='Lazily read/slice a folder of images like a numpy array',
     long_description=long_description,
+    long_description_content_type='text/markdown',
     author='Talley Lambert',
     author_email='talley.lambert@gmail.com',
     url='https://github.com/tlambert03/tifffolder',
