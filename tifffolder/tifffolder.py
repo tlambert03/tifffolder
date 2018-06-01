@@ -2,7 +2,7 @@ import os
 import re
 import numpy as np
 from fnmatch import fnmatch
-from collections import Counter, defaultdict
+from collections import defaultdict
 from tifffile import imread, TiffFile
 import logging
 logger = logging.getLogger(__name__)
@@ -87,9 +87,16 @@ def filter_flist(filelist, idx, pattern, exclude=False):
         ['/name_ch0_stack0000.tif', '/name_ch0_stack0001.tif',
          '/name_ch2_stack0000.tif', '/name_ch2_stack0001.tif']
     '''
+    def converter(matchobj):
+        """ converts a regex of the form {d4} to the form {:04d} """
+        if matchobj.groups()[0] == 'd':
+            return '{:0' + matchobj.groups()[1] + 'd}'
+        else:
+            return '{}'
+    _pattern = re.sub(r'{([dD])(\d{1,3})}', converter, pattern)
     idx = make_iterable(idx)
     return [f for f in filelist if
-            any(pattern.format(i) in f for i in idx) is not exclude]
+            any(_pattern.format(i) in f for i in idx) is not exclude]
 
 
 class TiffFolder(object):
@@ -109,26 +116,39 @@ class TiffFolder(object):
         >>> L[1:3, 1:100:10, :, 4].shape
         (2, 10, `nz`, 1, `nx`)
     """
+    _valid_axes = 'ptczyx'
 
-    def __init__(self, path, patterns=None, ext='*.tif'):
+    def __init__(self, path, patterns=None, ext='*.tif', axes='tczyx'):
         self.path = os.path.abspath(path)
         self.files = sorted([os.path.join(self.path, f)
                              for f in os.listdir(self.path)
                              if fnmatch(f, ext)])
-
-        self.tset = defaultdict(list)
+        if not self.files:
+            raise self.EmptyError('No %s files to parse in %s' % (ext, path))
         self.patterns = patterns or getattr(self, 'patterns', None)
+        for i in axes.lower():
+            if i not in self._valid_axes.lower():
+                raise ValueError('Unrecognized axis: %s' % i)
+        self.axes = axes.lower()
         if self.patterns:
-            try:
-                iter(self.patterns)
-            except TypeError:
-                raise TypeError('patterns argument must be iterable')
+            if not isinstance(self.patterns, (tuple, list)):
+                raise TypeError('patterns argument must be a tuple or list')
             if not all([isinstance(p, tuple) and
                         len(p) == 2 and
                         all([isinstance(i, str) for i in p])
                         for p in self.patterns]):
                 raise TypeError('patterns must be 2-tuples of strings')
+        else:
+            raise ValueError('No filename search patterns provided')
+        self._parser = re.compile("".join([build_regex(*p)
+                                  for p in self.patterns]))
+        self.patterns = dict(self.patterns)
+        self.decimated = False
         self._parse()
+
+    def _filter_axis(self, axis, idx, files=None):
+        files = files or self.files
+        return filter_flist(files, idx, self.patterns.get(axis))
 
     def getData(self, t=None, c=None, z=None, x=None, y=None):
         """ Actually open the files in self.files.
@@ -137,13 +157,16 @@ class TiffFolder(object):
             t,c,z,x,y: int, slice, or sequence of indices to select data
 
         """
+        if self.decimated:
+            raise NotImplementedError('Cannot currently handle data with '
+                                      'different number of timepoints per channel')
         files = self.files
         nt, nc, nz, ny, nx = self.shape
         if t is not None:
-            files = filter_flist(files, t, self.tpattern)
+            files = self._filter_axis('t', t, files)
             nt = len(make_iterable(t))
         if c is not None:
-            files = filter_flist(files, c, self.cpattern)
+            files = self._filter_axis('c', c, files)
             nc = len(make_iterable(c))
         if z is not None:
             nz = len(make_iterable(z))
@@ -190,50 +213,53 @@ class TiffFolder(object):
     def ndim(self):
         return len(self.shape)
 
-    @property
-    def shape(self):
-        if not hasattr(self, '_shape'):
-            ch = [re.search('(?<=' + self.cpattern.format(')(\\d+)(?=') +
-                  ')', f) for f in self.files]
-            print([i.group() for i in ch if i])
-            cnt = Counter([i.group() for i in ch if i])
-            print(cnt)
-            assert len(cnt), 'No matching tiff files found'
-            if not len(set(cnt.values())) == 1:
-                raise ValueError('Support for different number of timepoints '
-                                 'per channel is not yet implemented')
-            nc = len(cnt)
-            nt = list(cnt.values())[0]
-            with TiffFile(str(self.files[0])) as first_tiff:
-                nz = len(first_tiff.pages)
-                nx = first_tiff.pages[0].imagewidth
-                ny = first_tiff.pages[0].imagelength
-            self._shape = (nt, nc, nz, ny, nx)
-        return self._shape
-
     class ParseError(Exception):
         pass
 
+    class EmptyError(Exception):
+        pass
+
     def _parse_filename(self, filename):
-        result = self.parser.match(filename)
+        result = self._parser.match(filename)
         if result:
             D = result.groupdict()
             for k, v in D.items():
                 if v is not None:
-                    D[k] = int(v) if '{d' in self.pdict[k] else v
+                    D[k] = int(v) if v.isdigit() else v
                 else:
                     logger.info('Parser failed to match pattern: %s' % k)
             return D
         else:
-            raise self.ParseError('Failed to parse filename: {}'.format(filename))
+            raise self.ParseError('Failed to parse filename: {}'
+                                  .format(filename))
 
     def _parse(self):
-        if not self.patterns:
-            raise self.ParseError('Search patterns not provided')
-        self.parser = re.compile("".join([build_regex(*p)
-                                 for p in self.patterns]))
-        self.pdict = dict(self.patterns)
-        print([self._parse_filename(f) for f in self.files])
+        lod = [self._parse_filename(f) for f in self.files]
+        dol = dict(zip(lod[0], zip(*[d.values() for d in lod])))
+        nc = len(set(dol.get('c', ())))
+        nt = len(set(dol.get('t', ())))
+
+        self.channelinfo = defaultdict(lambda: defaultdict(list))
+        for info in lod:
+            for k, v in info.items():
+                if not k == 'c':
+                    self.channelinfo[info['c']][k].append(v)
+        if not len(set([frozenset(v['t']) for v in self.channelinfo.values()])) == 1:
+            self.decimated = True
+
+        with TiffFile(str(self.files[0])) as first_tiff:
+            nz = len(first_tiff.pages)
+            ny = first_tiff.pages[0].imagelength
+            nx = first_tiff.pages[0].imagewidth
+            self.dtype = first_tiff.pages[0].dtype
+
+        self.shape = (nt, nc, nz, ny, nx)
+
+
+def mode1(x):
+    values, counts = np.unique(x, return_counts=True)
+    m = counts.argmax()
+    return values[m]
 
 
 class LLSFolder(TiffFolder):
@@ -245,3 +271,16 @@ class LLSFolder(TiffFolder):
         ('c', '_ch{d1}'),
         ('cam', 'Cam{D1}')
     ]
+
+    def _parse(self):
+        super()._parse()
+        for chan, subdict in self.channelinfo.items():
+            for k, v in subdict.items():
+                if k in ('cam', 'w'):
+                    # assume the same value across all timepoints
+                    subdict[k] = v[0]
+            if self.shape[0] > 1:
+                if 'abs' in subdict and any(subdict['abs']):
+                    subdict['interval'] = mode1(np.subtract(
+                        subdict['abs'][1:], subdict['abs'][:-1]))
+
