@@ -26,6 +26,7 @@ setup(
     download_url='https://github.com/tlambert03/tifffolder/archive/0.1.0.tar.gz',
     license='MIT',
     keywords=['image', 'analysis', 'tiff'],
+    packages=['tifffolder'],
     classifiers=[
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: MIT License',
