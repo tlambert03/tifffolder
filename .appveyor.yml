@@ -55,8 +55,9 @@ install:
     - cmd: call %CONDA_INSTALL_LOCN%\Scripts\activate.bat
     - cmd: conda config --add channels conda-forge
     - cmd: conda config --set show_channel_urls true
-    - cmd: appveyor-retry conda install --yes --quiet conda
-    - cmd: appveyor-retry conda install --yes --quiet -c defaults anaconda-client conda-build
+    - cmd: conda config --set always_yes yes --set changeps1 no
+    - cmd: appveyor-retry conda install conda-build anaconda-client
+    - cmd: appveyor-retry conda update -q conda
 
 # Skip .NET project specific build phase.
 build: off
