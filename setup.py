@@ -1,17 +1,28 @@
 from setuptools import setup
+import io
+import re
+from collections import OrderedDict
 
-with open("README.md", "r") as fh:
-    long_description = fh.read()
+with io.open('README.md', 'rt', encoding='utf8') as f:
+    readme = f.read()
+
+with io.open('tifffolder/__init__.py', 'rt', encoding='utf8') as f:
+    version = re.search(r'__version__ = \'(.*?)\'', f.read()).group(1)
+
 
 setup(
     name='tifffolder',
-    version='0.1.0',
-    description='Lazily read/slice a folder of images like a numpy array',
-    long_description=long_description,
+    version=version,
+    url='https://github.com/tlambert03/tifffolder',
+    project_urls=OrderedDict((
+        ('Code', 'https://github.com/tlambert03/tifffolder'),
+        ('Issue tracker', 'https://github.com/tlambert03/tifffolder/issues'),
+    )),
+    description='Parse filenames & slice a folder of images like a numpy array',
+    long_description=readme,
     long_description_content_type='text/markdown',
     author='Talley Lambert',
     author_email='talley.lambert@gmail.com',
-    url='https://github.com/tlambert03/tifffolder',
     download_url='https://github.com/tlambert03/tifffolder/archive/0.1.0.tar.gz',
     license='MIT',
     keywords=['image', 'analysis', 'tiff'],
