@@ -49,8 +49,9 @@ cache: pip
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/osx-64/*.tar.bz2 --label $LABEL
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/linux-64/*.tar.bz2 --label $LABEL
 
-install: true
-script: true
+install:
+  - python setup.py sdist
+
 deploy:
   provider: pypi
   user: talley
