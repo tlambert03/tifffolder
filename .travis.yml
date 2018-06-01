@@ -52,6 +52,8 @@ cache: pip
 install:
   - python setup.py sdist
 
+script: true
+
 deploy:
   provider: pypi
   user: talley
