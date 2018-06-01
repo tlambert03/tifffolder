@@ -1,0 +1,41 @@
+{% set name = "tifffolder" %}
+{% set setupdata = load_setup_py_data() %}
+
+package:
+  name: {{ name }}
+  {% if environ.get('BRANCH') == "master" %}
+  version: {{ setupdata.get('version') }}
+  {% else %}
+  version: "{{ GIT_DESCRIBE_TAG }}_{{ GIT_BUILD_STR }}"
+  {% endif %}
+
+source:
+  # path: ..
+  git_url: https://github.com/tlambert03/tifffolder
+  git_rev: "{{ environ.get('BRANCH') }}"
+
+build:
+  number: 0
+  string: 'py{{ PY_VER|replace(".", "") }}_{{ PKG_BUILDNUM }}'
+  script: python setup.py install --single-version-externally-managed --record record.txt
+
+
+requirements:
+  build:
+    - python
+    - setuptools
+  run:
+    - python
+    - numpy
+    - tifffile >=0.14.0
+
+test:
+  imports:
+    - tifffolder
+
+
+about:
+  home: {{ setupdata.get('url') }}
+  license: {{ setupdata.get('license') }}
+  license_file: LICENSE
+  summary: {{ setupdata.get('description') }}
