@@ -8,6 +8,8 @@ branches:
   - master
   - develop
 
+cache: pip
+
 # install:
 #   - echo "TRAVIS_PYTHON_VERSION=$TRAVIS_PYTHON_VERSION"
 #   - export BRANCH=$(if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then echo $TRAVIS_BRANCH; else echo $TRAVIS_PULL_REQUEST_BRANCH; fi)
@@ -46,6 +48,9 @@ branches:
 #   - conda convert -p osx-64 -o $CONDA_BLD_PATH $OUTPUT
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/osx-64/*.tar.bz2 --label $LABEL
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/linux-64/*.tar.bz2 --label $LABEL
+
+install:
+  - python setup.py sdist
 
 deploy:
   provider: pypi
