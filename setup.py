@@ -23,7 +23,6 @@ setup(
     long_description_content_type='text/markdown',
     author='Talley Lambert',
     author_email='talley.lambert@gmail.com',
-    download_url='https://github.com/tlambert03/tifffolder/archive/0.1.0.tar.gz',
     license='MIT',
     keywords=['image', 'analysis', 'tiff'],
     packages=['tifffolder'],
