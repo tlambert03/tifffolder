@@ -8,6 +8,6 @@
     :license: MIT, see LICENSE for more details.
 """
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 
 from .tifffolder import TiffFolder, LLSFolder, filter_flist

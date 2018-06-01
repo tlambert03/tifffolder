@@ -58,7 +58,9 @@ after_success:
 deploy:
   provider: pypi
   user: talley
+  skip_cleanup: true
   password:
     secure: ZoNgL/hBNtuyRIaEReRKpA1Hm1oT69J+hvv13fTL6kB4RsgPMu+gjO5iBFod5L2ByG/6ZB1p/mee8xCs2w+ZUZOUty4Ngm2+UfNItm7piwWYM/1USGDdJ4elIzDsS++xy+8nr4J2T3mVqbYXNk25AonUGOhmSNDeoHHqLV2Jribw7GepXWh5rFBjQlEYNCLWMbLI+n89IIK0jpY7dvn9sU+NGzo1a+73YE9CVoJJnVfmnzfel3SP+nr2kG2ZwXnfMmd8yUPFVJDm/yk4WMNuD4a8CECiivFZbX1MYGgM1iuSq/FhbtJ9ZBOrCpEUml9IvrzUOb/THYAx5GTtkPsFBRueVPg5WCL6Xmxid913oJhtKy8w+/X/jeSZVLqi+YjPFiUvGblqMrAQA8eiWBVCB9IlXWh61Fi5I0nykLkpJkdJd8mdzPLS2dqU+ha6LHGAOevtpXyWrr9b2qpm7Mo4pOWtRlr4PiYwqC7YcIS8wXHUzMjXCMhHStkm3HqClieq1Dgc8q2AtEB2DTFW8crx41Dss+OwS9jpQ1biFPV/PDQtVPC3tr5CJ1xmR+pBfLEK4FUhc+1JITQZvDgIwE8bqCtDjyXdFOexCW9ETVBPSdbNc5VW2d5UWD6POee3HhsBPIsDdyDrt+CXPjpIujqP7liXCOCzj6pv3wofiCy0nxM=
   on:
     branch: master
+    condition: "$TRAVIS_PYTHON_VERSION == 3.6"
