@@ -49,8 +49,12 @@ cache: pip
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/osx-64/*.tar.bz2 --label $LABEL
 #   - anaconda -v -t $CONDA_UPLOAD_TOKEN upload -u $USER --force $CONDA_BLD_PATH/linux-64/*.tar.bz2 --label $LABEL
 
+install: true
+script: true
 deploy:
   provider: pypi
   user: talley
   password:
     secure: bJEdYOU14stRnqALaJJcLf75cRYPpPaGmeq5feGrfTjS2rnH1WhDZdy5N58PRNlQVulrv6sFxVUGrcODMGySR2SIeSAXkbSq75P29A5nsTkUOFN9SiP/mBC5xrXN+9Q8JUa5gy1cgzHVMijfPb/Z/f/1XYO68i2NwW9EJM7s+JsrFeBapa0+iv4rQjVmuruGEy7CJhEXWQoUF4xA7Hywqq6xejPF46IVBklCtyJUBIgv+nwLyLPFdHJBK7xWvBq4GnCaHdefSWjp1oevZ/1IQ+OoSq8PoXIyMsnRimx9j80Dsp5S0ukTsdB0DPHywS2jDmQVtoc6MOY/t/yDoT/6uMYKZGSHCSbG/cBtgV5Y9qZRJczcGZBRU9wrryXsNzE1xcp7Bt7GHuKddiQ7dbNknJ+7RiJTp/k3bsHrlbWEbt88rV9ug4WIpVCAdnmf4wTeBqqF98wWDsGOGNgCxaq2btwQ496NNQTJk1NeskxqnTJcBkWV37Yav7iu8fTWmZGG017rEZIOD+UnSW36SfmFG54WB6DxDMFs6OYALCqXebtQWdvEFFjSMy01sGJEpgjv6JQx+f81WagMd01zlVsHfcNLIH/gxQeS6nZvw99SsDRLnE462NZVaK8TTtWZWE5zLzUel408blVAwpT+MgM3ys9MT+Q3ywPQuC+IMwG5DB8=
+  on:
+    branch: master
