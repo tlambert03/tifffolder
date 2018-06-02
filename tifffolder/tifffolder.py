@@ -2,13 +2,42 @@ import os
 import re
 import numpy as np
 import logging
+import warnings
 import itertools as it
+import tifffile
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import cpu_count
 from collections import defaultdict, OrderedDict
-from tifffile import imread, TiffFile
 
 logger = logging.getLogger(__name__)
+
+
+def imshow(data, *args, **kwargs):
+    """ tifffile.imshow with my preferred settings """
+    import matplotlib.pyplot as plt
+    if 'photometric' not in kwargs:
+        kwargs['photometric'] = 'MINISBLACK'
+    if 'cmap' not in kwargs:
+        kwargs['cmap'] = 'gray'
+    if 'vmin' not in kwargs:
+        kwargs['vmin'] = data.min()
+    if 'vmax' not in kwargs:
+        kwargs['vmax'] = data.max()
+    tifffile.imshow(data, *args, **kwargs)
+    plt.show()
+
+
+def imread(*args, **kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return tifffile.imread(*args, **kwargs)
+
+
+class TiffFile(tifffile.TiffFile):
+    def __init__(self, *args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            super(TiffFile, self).__init__(*args, **kwargs)
 
 
 def make_iterable(idx):
@@ -77,16 +106,20 @@ class TiffFolder(object):
     Args:
         path (str): path to folder with files
         patterns (list of tuples): formattable pattern that identifies timepoints
+        axes (str): order of axes when getting data
         ext (str): file extension to match
+        maxworkers (int): number of threads to use when reading data.
+            When None, will use cpu_count() // 2
 
     Examples:
         >>> L = TiffFolder('/path/to/files')
         >>> L[1:3, 1:100:10, :, 4].shape
         (2, 10, `nz`, 1, `nx`)
     """
-    _valid_axes = 'stczyx'
 
-    def __init__(self, path, patterns=None, ext='.tif'):
+    _axes = 'stczyx'
+
+    def __init__(self, path, patterns=None, axes=None, ext='.tif', maxworkers=1):
         self.path = os.path.abspath(path)
         self.files = sorted([os.path.join(self.path, f)
                              for f in os.listdir(self.path)
@@ -110,15 +143,24 @@ class TiffFolder(object):
                 raise TypeError('patterns argument must either be a dict, tuple, or list')
         else:
             raise ValueError('No filename search patterns provided')
-
         self._parser = re.compile("".join([build_regex(*p) for p in _patrns]))
-        self.patterns = dict(_patrns)
+        self.patterns = {k.lower(): v for k, v in _patrns}
+        self._axes = (axes or self._axes).lower()
+        for ax in set(self._axes):
+            if ax not in list(self.patterns.keys()) + ['x', 'y', 'z']:
+                logger.info('Warning: No pattern regex provided for axis {}.'
+                            .format(ax) + '  Ignoring.')
+                self._axes = self._axes.replace(ax, '')
+        self.maxworkers = maxworkers
         self._parse()
 
     class ParseError(Exception):
         pass
 
     class EmptyError(Exception):
+        pass
+
+    class ShapeError(Exception):
         pass
 
     @property
@@ -131,10 +173,28 @@ class TiffFolder(object):
         """ The order of axes returned by self.shape """
         return ''.join((k for k, v in self._shapedict.items() if v > 1))
 
+    @axes.setter
+    def axes(self, ax_string):
+        for char in ax_string:
+            if char not in self.axes:
+                raise ValueError('Axes "{}" not in TiffFolder with axes "{}"'
+                                 .format(char, self.axes))
+        if len(ax_string) != len(self.axes):
+            raise ValueError('Cannot change TiffFolder dimensions from "{}" to "{}".'
+                             .format(len(self.axes), len(ax_string)))
+        if not set(ax_string) == set(self.axes):
+            raise ValueError('Error: unassigned axes: {}'
+                             .format(set(self.axes) - set(ax_string)))
+
+        self._shapedict = OrderedDict([(ax, self._shapedict[ax]) for ax in ax_string])
+
     @property
     def ndim(self):
         """ Number of dimensions in the dataset """
         return len(self.shape)
+
+    def list_excluded(self):
+        return sorted(set(self.files) - set(self._file_array.flatten()))
 
     def select_filenames(self, **kwargs):
         """ Get a list of filenames matching axis selection criteria
@@ -151,8 +211,8 @@ class TiffFolder(object):
             list: list of string filepaths
         """
         axes_selections = self._get_axes_selections(**kwargs)
-        stc_combos = it.product(*list(axes_selections.values())[:3])
-        return sorted(self._stcz_farray[i][0].decode('utf-8') for i in stc_combos)
+        file_idxs = it.product(*list(axes_selections.values())[:3])
+        return sorted(self._file_array[i][0] for i in file_idxs)
 
     def asarray(self, maxworkers=None, **kwargs):
         """ Read TIFF data as numpy array
@@ -173,36 +233,71 @@ class TiffFolder(object):
         Raises:
             NotImplementedError: if the number of timepoints, channels,
                 positions, zplanes... is different across the dataset
+            ShapeError: if the images are not the same size and a ValueError
+                occurs when adding a new image to the array.
         """
         if not self._symmetrical:
             raise NotImplementedError('Cannot currently handle data with '
                                       'different set of timepoints per channel')
+        maxworkers = maxworkers or self.maxworkers
+        maxworkers = maxworkers if maxworkers is not None else cpu_count() // 2
 
         axes_selections = self._get_axes_selections(**kwargs)
-        # find ultimate stack shape
-        _sizes = [len(v) for v in axes_selections.values()]
-        # don't crop XY until later
-        _sizes[-2:] = list(self._shapedict.values())[-2:]
 
-        stc_combos = it.product(*list(axes_selections.values())[:3])
-        stacks = np.empty(tuple(_sizes))
+        # get requested stack shape
+        out_shape = [len(v) for v in axes_selections.values()]
+        # don't crop X or Y until later
+        out_shape[-2:] = self.shape[-2:]
 
-        def reader(stc_index):
-            stacks[stc_index] = imread(self._stcz_farray[stc_index],
-                                       key=axes_selections['z'])
+        # get indices in self._file_array for all files requested
+        # and the corresponding location (slice) of the output stack
+        file_idxs = OrderedDict.fromkeys(self._file_array_axes)
+        stack_idxs = OrderedDict.fromkeys(self.axes)
+        for ax, v in axes_selections.items():
+            if ax in self._file_array_axes:
+                file_idxs[ax] = v
+                stack_idxs[ax] = v
+            else:
+                stack_idxs[ax] = [np.s_[:]]
+        file_idxs = tuple(it.product(*file_idxs.values()))
+        stack_idxs = tuple(it.product(*stack_idxs.values()))
+        assert len(file_idxs) == len(stack_idxs), 'Unexpected tifffolder error!'
+        zipped_idxs = zip(stack_idxs, file_idxs)
+
+        # allocate empty stack
+        stacks = np.empty(tuple(out_shape))
+
+        def read_file(zipped_idx):
+            stack_idx, f_array_idx = zipped_idx
+            fpath = self._file_array[f_array_idx]
+            data = imread(fpath, key=axes_selections.get('z', None))
+            # FIX ME: ASSUMING THAT FILES ARE Z STACKS FOR NOW
+            try:
+                stacks[stack_idx] = data
+            except ValueError as e:
+                if data.shape != stacks[stack_idx].shape:
+                    try:
+                        # quick way to rotate the image if XY and
+                        data = data.transpose([stacks[stack_idx].shape.index(x)
+                                              for x in data.shape])
+                        stacks[stack_idx] = data
+                    except ValueError as e:
+                        raise self.ShapeError('Error adding file {} to array: '
+                                      .format(os.path.basename(fpath)) + str(e))
 
         # actually read the files, in parallel if requested
-        maxworkers = maxworkers if maxworkers is not None else cpu_count() // 2
         if maxworkers < 2:
-            for i in stc_combos:
-                reader(i)
+            for i in zipped_idxs:
+                read_file(i)
         else:
             with ThreadPoolExecutor(maxworkers) as executor:
-                executor.map(reader, stc_combos)
+                executor.map(read_file, zipped_idxs)
 
-        if len(axes_selections['y']) != self._shapedict['y']:
+        requested_ny = len(axes_selections.get('y', []))
+        requested_nx = len(axes_selections.get('x', []))
+        if 'y' in axes_selections and requested_ny != self._shapedict['y']:
             stacks = stacks[:, :, :, :, axes_selections['y']]
-        if len(axes_selections['x']) != self._shapedict['x']:
+        if 'x' in axes_selections and requested_nx != self._shapedict['x']:
             stacks = stacks[:, :, :, :, :, axes_selections['x']]
 
         return np.squeeze(stacks)
@@ -214,7 +309,7 @@ class TiffFolder(object):
         raise IndexError("The index (%d) is out of range." % key)
 
     def __getitem__(self, key):
-        axes_selections = OrderedDict.fromkeys(self._valid_axes)
+        axes_selections = OrderedDict.fromkeys(self.axes)
 
         def handle_idx(idx, axis):
             length = self._shapedict[axis]
@@ -239,7 +334,7 @@ class TiffFolder(object):
         return self.asarray(**axes_selections)
 
     def _get_axes_selections(self, **kwargs):
-        axes_selections = OrderedDict.fromkeys(self._valid_axes)
+        axes_selections = OrderedDict.fromkeys(self.axes)
         for axis in axes_selections:
             if kwargs.get(axis, None) is not None:
                 axes_selections[axis] = make_iterable(kwargs.get(axis))
@@ -262,46 +357,79 @@ class TiffFolder(object):
                                   .format(filename))
 
     def _parse(self):
-        lod = [self._parse_filename(f) for f in self.files]
 
+        # get the axes specified by the user, but leave out x and y
+        _axes = self._axes.replace('x', '').replace('y', '')
+        # SHP will hold the size of each axis other than XY
+        SHP = OrderedDict.fromkeys(self._axes)
+
+        # the channelinfo dict will contain information about all axes
+        # for each channel in the dataset (in case this information
+        # differs across channels in the dataset)
         self.channelinfo = defaultdict(lambda: defaultdict(list))
-        for info in lod:
-            for k, v in info.items():
-                if not k == 'c':
-                    self.channelinfo[info['c']][k].append(v)
+        _parsed = {f: self._parse_filename(f) for f in self.files}
+        for infodict in _parsed.values():
+            for k, v in infodict.items():
+                if k == 'c':
+                    continue
+                self.channelinfo[infodict.get('c', 0)][k].append(v)
+        SHP['c'] = len(self.channelinfo)
 
-        _SD = OrderedDict(zip('stcz', (None,) * 4))
-        _SD['c'] = len(self.channelinfo)
-        self._axes_sets = OrderedDict(zip('stcz', (None,) * 4))
-        self._axes_sets['c'] = sorted(self.channelinfo.keys())
+        # axes_sets represent all of the distinct items in each axis
+        # represented in the dataset.  For instance, the actual list of
+        # timepoints represented in the filenames, or the list of stage
+        # positions, etc...
+        self._axsets = OrderedDict.fromkeys(_axes)
+        self._axsets['c'] = list(self.channelinfo.keys())
         self._symmetrical = True
-        for i in 'stz':
-            i_set = {frozenset(v[i]) for v in self.channelinfo.values()}
-            if len(i_set) > 1:
+        for ax in _axes.replace('c', ''):
+            ax_sets = {frozenset(v[ax]) for v in self.channelinfo.values()}
+            if len(ax_sets) > 1:
+                # there is a different number of items in this axis
+                # across channels.
                 self._symmetrical = False
-            self._axes_sets[i] = sorted(i_set.pop()) or None
-            _SD[i] = len(self._axes_sets[i]) if self._axes_sets[i] else 1
+            self._axsets[ax] = sorted(set().union(*ax_sets))
+            SHP[ax] = len(self._axsets[ax]) or 1
 
-        string_padding = 10
-        self._stcz_farray = np.empty(tuple(_SD.values()),
-                                     dtype='S{}'.format(len(self.files[0])
-                                                        + string_padding))
-        for f in self.files:
-            info = self._parse_filename(f)
-            idx = [0, 0, 0, 0]
-            for i, (k, v) in enumerate(self._axes_sets.items()):
-                if v is not None:
-                    idx[i] = v.index(info.get(k))
-            self._stcz_farray[tuple(idx)] = f
+        # the file_array will hold all of the filenames seperated and arranged
+        # by axis.  for ease of later retrieval
+        # NOTE: X and Y are still not part of SHP yet...
 
-        with TiffFile(str(self.files[0])) as first_tiff:
-            if _SD['z'] == 1:
-                _SD['z'] = len(first_tiff.pages)
-            _SD['y'] = first_tiff.pages[0].imagelength
-            _SD['x'] = first_tiff.pages[0].imagewidth
-            self.dtype = first_tiff.pages[0].dtype
+        self._file_array = np.empty(tuple(sz for ax, sz in SHP.items()
+                                    if ax not in ('x', 'y') and sz > 1),
+                                    dtype=object)
+        self._file_array_axes = ''.join(ax for ax, sz in SHP.items()
+                                        if ax not in ('x', 'y') and sz > 1)
 
-        self._shapedict = OrderedDict(zip(self._valid_axes, tuple(_SD.values())))
+        # place each file into the file_array, according to the
+        # parsed information from the filename
+        for f, info in _parsed.items():
+            idx = tuple(axset.index(info.get(ax))
+                        for ax, axset in self._axsets.items()
+                        if len(axset) > 1)
+            if len(idx) == 1:
+                idx = idx[0]
+            self._file_array[idx] = f
+
+        if self.list_excluded():
+            logger.warn('WARNING: {} files were excluded during parsing. '
+                        .format(len(self.list_excluded())) +
+                        'Use TiffFolder.list_excluded() to show excluded '
+                        'files. Provided patterns may not match files.')
+
+        # peek into the header of the first file in the list to get file
+        # dimensions
+        try:
+            with TiffFile(str(self.files[0])) as first_tiff:
+                SHP['z'] = len(first_tiff.pages)
+                self._tiff3d = True if SHP['z'] > 1 else False
+                SHP['y'] = first_tiff.pages[0].imagelength
+                SHP['x'] = first_tiff.pages[0].imagewidth
+                self.dtype = first_tiff.pages[0].dtype
+        except Exception as e:
+            raise self.ParseError('Could not get TIFF information: {}'.format(e))
+
+        self._shapedict = OrderedDict(SHP)
 
 
 class LLSFolder(TiffFolder):
@@ -322,7 +450,7 @@ class LLSFolder(TiffFolder):
                 if k in ('cam', 'w'):
                     # assume the same value across all timepoints
                     subdict[k] = v[0]
-            if self.shape[0] > 1:
+            if self._shapedict.get('t') > 1:
                 if 'abs' in subdict and any(subdict['abs']):
                     subdict['interval'] = mode1(np.subtract(
                         subdict['abs'][1:], subdict['abs'][:-1]))
