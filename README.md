@@ -28,7 +28,12 @@ $ conda install -c talley tifffolder
 >>> tf.axes
 'tczyx'
 
-# example:
+# reorder data  (still experimental)
+>>> tf.axes = 'tzcxy'
+>>> tf.shape
+(10, 65, 2, 157, 184)
+
+# data is only read from disk when explicitly indexed
 # get the last 10 Z planes from every other timepoint, 
 # in the first channel cropping to the middle half in Y
 >>> data = tf[::2, 0, -10:, tf.shape[-2] * 1 // 4 : tf.shape[-2] * 3 // 4 ]
@@ -44,6 +49,9 @@ $ conda install -c talley tifffolder
 >>> alldata = tf.asarray()
 >>> alldata.shape == tf.shape
 True
+
+# asarray() also accepts any axis kwargs
+>>> somedata = tf.asarray(t=range(1,10), c=0)
 
 # Or just to select filenames along certain axes:
 >>> tf.select_filenames(t=range(1,10,2), c=0)
