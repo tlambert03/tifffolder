@@ -18,7 +18,7 @@ setup(
         ('Code', 'https://github.com/tlambert03/tifffolder'),
         ('Issue tracker', 'https://github.com/tlambert03/tifffolder/issues'),
     )),
-    description='Parse filenames & slice a folder of images like a numpy array',
+    description='Easily parse/access a subset of data from a (≤6D) folder of TIFFs',
     long_description=readme,
     long_description_content_type='text/markdown',
     author='Talley Lambert',
