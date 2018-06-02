@@ -13,7 +13,7 @@ $ pip install tifffolder
 ### Install with conda
 
 ```bash
-$ conda install -c tifffolder
+$ conda install -c talley tifffolder
 ```
 
 ### Usage
