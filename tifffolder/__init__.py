@@ -8,6 +8,6 @@
     :license: MIT, see LICENSE for more details.
 """
 
-__version__ = '0.1.3'
+__version__ = '0.1.4'
 
 from .tifffolder import TiffFolder, LLSFolder, MetamorphFolder, build_regex
