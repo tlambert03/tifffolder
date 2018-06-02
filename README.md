@@ -93,3 +93,7 @@ For example:
 '(?=.*_ch(?P<c>\\d{1}))?'
 ```
 
+
+##### todo
+* check axis reordering
+* check z planes across files
