@@ -236,13 +236,20 @@ class TiffFolder(object):
             ShapeError: if the images are not the same size and a ValueError
                 occurs when adding a new image to the array.
         """
-        if not self._symmetrical:
-            raise NotImplementedError('Cannot currently handle data with '
-                                      'different set of timepoints per channel')
         maxworkers = maxworkers or self.maxworkers
         maxworkers = maxworkers if maxworkers is not None else cpu_count() // 2
 
         axes_selections = self._get_axes_selections(**kwargs)
+
+        if not self._symmetrical:
+            if len(axes_selections.get('c')) > 1:
+                raise NotImplementedError('Cannot currently handle data with '
+                                          'different set of timepoints per channel')
+            else:
+                # FIX ME: channelinfo is NOT an ordered dict... this will break
+                tset = tuple(self.channelinfo.values())[axes_selections.get('c')[0]].get('t')
+                axes_selections['t'] = [t for t in list(axes_selections['t'])
+                                        if t in tset]
 
         # get requested stack shape
         out_shape = [len(v) for v in axes_selections.values()]
@@ -256,7 +263,7 @@ class TiffFolder(object):
         for ax, v in axes_selections.items():
             if ax in self._file_array_axes:
                 file_idxs[ax] = v
-                stack_idxs[ax] = v
+                stack_idxs[ax] = range(len(v))
             else:
                 stack_idxs[ax] = [np.s_[:]]
         file_idxs = tuple(it.product(*file_idxs.values()))
