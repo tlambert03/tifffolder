@@ -1,10 +1,13 @@
 import os
 import re
 import numpy as np
-from fnmatch import fnmatch
-from collections import defaultdict
-from tifffile import imread, TiffFile
 import logging
+import itertools as it
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import cpu_count
+from collections import defaultdict, OrderedDict
+from tifffile import imread, TiffFile
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,21 +16,18 @@ def make_iterable(idx):
     try:
         iter(idx)
     except TypeError:
-        idx = [idx]
+        if idx is None:
+            return []
+        else:
+            idx = [idx]
     return idx
 
 
-def slice_to_iterable(slc, maxidx):
-    ''' Convert python slice to iterable sequence
-
-    Args:
-        slc (slice): python slice object
-        maxidx (int): maximum index that the iterable should return
-
-    Returns:
-        `range` iterable
-    '''
-    return range(*slc.indices(maxidx))
+def mode1(x):
+    """Returns the mode value of a one-dimensional array"""
+    values, counts = np.unique(x, return_counts=True)
+    m = counts.argmax()
+    return values[m]
 
 
 def build_regex(label, easyreg):
@@ -58,45 +58,14 @@ def build_regex(label, easyreg):
     def wrap(label):
         def func(matchobj):
             t = matchobj.group('typ')
+            t = ('\\' + t) if t is not None else '[a-zA-Z0-9]'
             n = matchobj.group('num')
-            return r'(?P<' + label + '>\\' + t + '{' + n + '})'
+            n = '{' + n + '}' if n is not None else '+'
+            return r'(?P<' + label + '>' + t + n + ')'
         return func
-    ss = re.sub(r'{(?P<typ>[dD])(?P<num>\d{1,3})}', wrap(label), easyreg)
+    ss = re.sub(r'{(?P<typ>[dD])?(?P<num>\d+)?}', wrap(label), easyreg)
     assert ss != easyreg, 'failed to parse pattern!: {}'.format(easyreg)
     return '(?=.*{})?'.format(ss)
-
-
-def filter_flist(filelist, idx, pattern, exclude=False):
-    ''' Filter
-
-    Args:
-        filelist (:obj:`list` of :obj:`str`): filenames to filter
-        idx (int, Iterable[int]): number or iterable of numbers to substitute
-            into `pattern` when filtering files
-        pattern (str): formattable string, into which all items of idx will be
-            inserted.
-
-    Returns:
-        list: filtered list of filenames
-
-    Examples:
-        >>> flist = ['/name_ch0_stack0000.tif', '/name_ch0_stack0001.tif',
-                     '/name_ch1_stack0000.tif', '/name_ch1_stack0001.tif',
-                     '/name_ch2_stack0000.tif', '/name_ch2_stack0001.tif']'
-        >>> filter_flist(flist, (0,2), '_ch{}_')
-        ['/name_ch0_stack0000.tif', '/name_ch0_stack0001.tif',
-         '/name_ch2_stack0000.tif', '/name_ch2_stack0001.tif']
-    '''
-    def converter(matchobj):
-        """ converts a regex of the form {d4} to the form {:04d} """
-        if matchobj.groups()[0] == 'd':
-            return '{:0' + matchobj.groups()[1] + 'd}'
-        else:
-            return '{}'
-    _pattern = re.sub(r'{([dD])(\d{1,3})}', converter, pattern)
-    idx = make_iterable(idx)
-    return [f for f in filelist if
-            any(_pattern.format(i) in f for i in idx) is not exclude]
 
 
 class TiffFolder(object):
@@ -108,116 +77,175 @@ class TiffFolder(object):
     Args:
         path (str): path to folder with files
         patterns (list of tuples): formattable pattern that identifies timepoints
-        cpattern (str): formattable pattern that identifies channels
-        ext (str): fnmatch expression to filter files
+        ext (str): file extension to match
 
     Examples:
         >>> L = TiffFolder('/path/to/files')
         >>> L[1:3, 1:100:10, :, 4].shape
         (2, 10, `nz`, 1, `nx`)
     """
-    _valid_axes = 'ptczyx'
+    _valid_axes = 'stczyx'
 
-    def __init__(self, path, patterns=None, ext='*.tif', axes='tczyx'):
+    def __init__(self, path, patterns=None, ext='.tif'):
         self.path = os.path.abspath(path)
         self.files = sorted([os.path.join(self.path, f)
                              for f in os.listdir(self.path)
-                             if fnmatch(f, ext)])
+                             if f.lower().endswith(ext.lower())])
         if not self.files:
             raise self.EmptyError('No %s files to parse in %s' % (ext, path))
-        self.patterns = patterns or getattr(self, 'patterns', None)
-        for i in axes.lower():
-            if i not in self._valid_axes.lower():
-                raise ValueError('Unrecognized axis: %s' % i)
-        self.axes = axes.lower()
-        if self.patterns:
-            if not isinstance(self.patterns, (tuple, list)):
-                raise TypeError('patterns argument must be a tuple or list')
-            if not all([isinstance(p, tuple) and
-                        len(p) == 2 and
-                        all([isinstance(i, str) for i in p])
-                        for p in self.patterns]):
-                raise TypeError('patterns must be 2-tuples of strings')
+
+        _patrns = patterns or getattr(self, 'patterns', None)
+        if _patrns:
+            if isinstance(_patrns, (tuple, list)):
+                if not all([isinstance(p, tuple) and
+                            len(p) == 2 and
+                            all([isinstance(i, str) for i in p])
+                            for p in _patrns]):
+                    raise TypeError('patterns must be 2-tuples of strings')
+            elif isinstance(_patrns, (dict)):
+                if not all([isinstance(_patrns[k], str) for k in _patrns]):
+                    raise TypeError('patterns must all be strings')
+                _patrns = _patrns.items()
+            else:
+                raise TypeError('patterns argument must either be a dict, tuple, or list')
         else:
             raise ValueError('No filename search patterns provided')
-        self._parser = re.compile("".join([build_regex(*p)
-                                  for p in self.patterns]))
-        self.patterns = dict(self.patterns)
-        self.decimated = False
+
+        self._parser = re.compile("".join([build_regex(*p) for p in _patrns]))
+        self.patterns = dict(_patrns)
         self._parse()
-
-    def _filter_axis(self, axis, idx, files=None):
-        files = files or self.files
-        return filter_flist(files, idx, self.patterns.get(axis))
-
-    def getData(self, t=None, c=None, z=None, x=None, y=None):
-        """ Actually open the files in self.files.
-
-        Args:
-            t,c,z,x,y: int, slice, or sequence of indices to select data
-
-        """
-        if self.decimated:
-            raise NotImplementedError('Cannot currently handle data with '
-                                      'different number of timepoints per channel')
-        files = self.files
-        nt, nc, nz, ny, nx = self.shape
-        if t is not None:
-            files = self._filter_axis('t', t, files)
-            nt = len(make_iterable(t))
-        if c is not None:
-            files = self._filter_axis('c', c, files)
-            nc = len(make_iterable(c))
-        if z is not None:
-            nz = len(make_iterable(z))
-        stacks = [imread(f, key=z) for f in files]
-        stacks = np.stack(stacks).reshape((nt, nc, nz, ny, nx))
-
-        if y is not None:
-            ny = len(make_iterable(y))
-            stacks = stacks[:, :, :, y, :].reshape((nt, nc, nz, ny, nx))
-        if x is not None:
-            nx = len(make_iterable(x))
-            stacks = stacks[:, :, :, :, x].reshape((nt, nc, nz, ny, nx))
-        return np.squeeze(stacks)
-
-    def __len__(self):
-        return self.shape[0]
-
-    def __getitem__(self, key):
-        # FIXME: ndims hardcoded
-        t, c, z, y, x = (None,) * 5
-
-        def handle_idx(idx, length):
-            if isinstance(idx, slice):
-                return slice_to_iterable(idx, length)
-            if isinstance(idx, int):
-                if idx < 0:  # Handle negative indices
-                    idx += length
-                if idx < 0 or idx >= length:
-                    raise IndexError("The index (%d) is out of range." % idx)
-                return idx
-
-        if isinstance(key, tuple):
-            keys = tuple(handle_idx(*i) for i in zip(key, self.shape[:len(key)]))
-            t, c, z, y, x = keys + (None,) * (5 - len(key))
-        elif isinstance(key, (slice, int)):
-            # Get the start, stop, and step from the slice
-            t = handle_idx(key, self.shape[0])
-        else:
-            raise TypeError("Invalid argument type.")
-
-        return self.getData(t, c, z, x, y)
-
-    @property
-    def ndim(self):
-        return len(self.shape)
 
     class ParseError(Exception):
         pass
 
     class EmptyError(Exception):
         pass
+
+    @property
+    def shape(self):
+        """ The shape of the data in the folder (in order of self.axes) """
+        return tuple(i for i in self._shapedict.values() if i > 1)
+
+    @property
+    def axes(self):
+        """ The order of axes returned by self.shape """
+        return ''.join((k for k, v in self._shapedict.items() if v > 1))
+
+    @property
+    def ndim(self):
+        """ Number of dimensions in the dataset """
+        return len(self.shape)
+
+    def select_filenames(self, **kwargs):
+        """ Get a list of filenames matching axis selection criteria
+
+        Args:
+            **s (int, slice, iterable): subset of filenames along s axis
+            **t (int, slice, iterable): subset of filenames along t axis
+            **c (int, slice, iterable): subset of filenames along c axis
+            **z (int, slice, iterable): subset of filenames along z axis
+            **y (int, slice, iterable): subset of filenames along y axis
+            **x (int, slice, iterable): subset of filenames along x axis
+
+        Returns:
+            list: list of string filepaths
+        """
+        axes_selections = self._get_axes_selections(**kwargs)
+        stc_combos = it.product(*list(axes_selections.values())[:3])
+        return sorted(self._stcz_farray[i][0].decode('utf-8') for i in stc_combos)
+
+    def asarray(self, maxworkers=None, **kwargs):
+        """ Read TIFF data as numpy array
+
+        Args:
+            maxworkers (int): Max number of threads to use. If None,
+                will use half the availble of cpu cores.
+            **s (int, slice, iterable): subset of data to retrieve in s axis
+            **t (int, slice, iterable): subset of data to retrieve in t axis
+            **c (int, slice, iterable): subset of data to retrieve in c axis
+            **z (int, slice, iterable): subset of data to retrieve in z axis
+            **y (int, slice, iterable): subset of data to retrieve in y axis
+            **x (int, slice, iterable): subset of data to retrieve in x axis
+
+        Returns:
+            numpy array of image data
+
+        Raises:
+            NotImplementedError: if the number of timepoints, channels,
+                positions, zplanes... is different across the dataset
+        """
+        if not self._symmetrical:
+            raise NotImplementedError('Cannot currently handle data with '
+                                      'different set of timepoints per channel')
+
+        axes_selections = self._get_axes_selections(**kwargs)
+        # find ultimate stack shape
+        _sizes = [len(v) for v in axes_selections.values()]
+        # don't crop XY until later
+        _sizes[-2:] = list(self._shapedict.values())[-2:]
+
+        stc_combos = it.product(*list(axes_selections.values())[:3])
+        stacks = np.empty(tuple(_sizes))
+
+        def reader(stc_index):
+            stacks[stc_index] = imread(self._stcz_farray[stc_index],
+                                       key=axes_selections['z'])
+
+        # actually read the files, in parallel if requested
+        maxworkers = maxworkers if maxworkers is not None else cpu_count() // 2
+        if maxworkers < 2:
+            for i in stc_combos:
+                reader(i)
+        else:
+            with ThreadPoolExecutor(maxworkers) as executor:
+                executor.map(reader, stc_combos)
+
+        if len(axes_selections['y']) != self._shapedict['y']:
+            stacks = stacks[:, :, :, :, axes_selections['y']]
+        if len(axes_selections['x']) != self._shapedict['x']:
+            stacks = stacks[:, :, :, :, :, axes_selections['x']]
+
+        return np.squeeze(stacks)
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __missing__(self, key):
+        raise IndexError("The index (%d) is out of range." % key)
+
+    def __getitem__(self, key):
+        axes_selections = OrderedDict.fromkeys(self._valid_axes)
+
+        def handle_idx(idx, axis):
+            length = self._shapedict[axis]
+            if isinstance(idx, slice):
+                return range(*idx.indices(length))
+            if isinstance(idx, int):
+                if idx < 0:  # Handle negative indices
+                    idx += length
+                if idx < 0 or idx >= length:
+                    return self.__missing__(idx)
+                return idx
+
+        if isinstance(key, tuple):
+            keys = tuple(handle_idx(*i) for i in zip(key, self.axes[:len(key)]))
+            axes_selections.update(dict(zip(self.axes[:len(key)], keys)))
+        elif isinstance(key, (slice, int)):
+            # Get the start, stop, and step from the slice
+            axes_selections[self.axes[0]] = handle_idx(key, self.axes[0])
+        else:
+            raise TypeError("Invalid argument type.")
+
+        return self.asarray(**axes_selections)
+
+    def _get_axes_selections(self, **kwargs):
+        axes_selections = OrderedDict.fromkeys(self._valid_axes)
+        for axis in axes_selections:
+            if kwargs.get(axis, None) is not None:
+                axes_selections[axis] = make_iterable(kwargs.get(axis))
+            else:
+                axes_selections[axis] = range(self._shapedict[axis])
+        return axes_selections
 
     def _parse_filename(self, filename):
         result = self._parser.match(filename)
@@ -235,34 +263,49 @@ class TiffFolder(object):
 
     def _parse(self):
         lod = [self._parse_filename(f) for f in self.files]
-        dol = dict(zip(lod[0], zip(*[d.values() for d in lod])))
-        nc = len(set(dol.get('c', ())))
-        nt = len(set(dol.get('t', ())))
 
         self.channelinfo = defaultdict(lambda: defaultdict(list))
         for info in lod:
             for k, v in info.items():
                 if not k == 'c':
                     self.channelinfo[info['c']][k].append(v)
-        if not len(set([frozenset(v['t']) for v in self.channelinfo.values()])) == 1:
-            self.decimated = True
+
+        _SD = OrderedDict(zip('stcz', (None,) * 4))
+        _SD['c'] = len(self.channelinfo)
+        self._axes_sets = OrderedDict(zip('stcz', (None,) * 4))
+        self._axes_sets['c'] = sorted(self.channelinfo.keys())
+        self._symmetrical = True
+        for i in 'stz':
+            i_set = {frozenset(v[i]) for v in self.channelinfo.values()}
+            if len(i_set) > 1:
+                self._symmetrical = False
+            self._axes_sets[i] = sorted(i_set.pop()) or None
+            _SD[i] = len(self._axes_sets[i]) if self._axes_sets[i] else 1
+
+        string_padding = 10
+        self._stcz_farray = np.empty(tuple(_SD.values()),
+                                     dtype='S{}'.format(len(self.files[0])
+                                                        + string_padding))
+        for f in self.files:
+            info = self._parse_filename(f)
+            idx = [0, 0, 0, 0]
+            for i, (k, v) in enumerate(self._axes_sets.items()):
+                if v is not None:
+                    idx[i] = v.index(info.get(k))
+            self._stcz_farray[tuple(idx)] = f
 
         with TiffFile(str(self.files[0])) as first_tiff:
-            nz = len(first_tiff.pages)
-            ny = first_tiff.pages[0].imagelength
-            nx = first_tiff.pages[0].imagewidth
+            if _SD['z'] == 1:
+                _SD['z'] = len(first_tiff.pages)
+            _SD['y'] = first_tiff.pages[0].imagelength
+            _SD['x'] = first_tiff.pages[0].imagewidth
             self.dtype = first_tiff.pages[0].dtype
 
-        self.shape = (nt, nc, nz, ny, nx)
-
-
-def mode1(x):
-    values, counts = np.unique(x, return_counts=True)
-    m = counts.argmax()
-    return values[m]
+        self._shapedict = OrderedDict(zip(self._valid_axes, tuple(_SD.values())))
 
 
 class LLSFolder(TiffFolder):
+    """ Example class for handling lattice light sheet data """
     patterns = [
         ('rel', '_{d7}msec'),
         ('abs', '_{d10}msecAbs'),
@@ -273,7 +316,7 @@ class LLSFolder(TiffFolder):
     ]
 
     def _parse(self):
-        super()._parse()
+        super(LLSFolder, self)._parse()
         for chan, subdict in self.channelinfo.items():
             for k, v in subdict.items():
                 if k in ('cam', 'w'):
@@ -284,3 +327,11 @@ class LLSFolder(TiffFolder):
                     subdict['interval'] = mode1(np.subtract(
                         subdict['abs'][1:], subdict['abs'][:-1]))
 
+
+class MetamorphFolder(TiffFolder):
+    """ Example class for handling metamorph data """
+    patterns = [
+        ('t', '_t{d}'),
+        ('c', '_w{}'),
+        ('s', '_s{d}'),
+    ]
