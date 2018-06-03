@@ -67,14 +67,14 @@ True
 tifffolder converts a simplified regex syntax into relatively robust lookahead regex that will match patterns in any order in the filename or fail elegantly.
 
 The TiffFolder class accepts a `patterns` parameter (dict or list of two-tuples).  For each (key, value) in the `patterns` dict:
-* key = the axes name (such as `'x', 'y', 'z', 'c', 't', 's'`)
+* key = the axis name (e.g. `'x', 'y', 'z', 'c', 't', 's'`)
 * value = the simplified regex where:
     - things in brackets `{}` will be captured
-    - things outside of brackest will be required to match
+    - things outside of brackest will be required to match, but not captured
     - `{d}` means match any number of digits
     - `{D}` means match any number of NON-digits
     - `{}` means match any alphanumeric character (excluding underscore)
-    - `{d2}` will match exactly two digits
+    - `{d2}` means match exactly two digits (for example)
 
 
 For example:
