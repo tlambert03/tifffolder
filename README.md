@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Lazily read a subset of data from a folder of images using numpy slicing syntax.  Includes simplified but robust file pattern matching syntax and multithreaded file reading.
+Lazily read a subset of data from a folder of images using numpy slicing syntax.  Includes simplified but robust file pattern matching syntax and multithreaded file reading.  Note: this is not intended to promote a folder of tiffs as a useful way to store lots of information (things like hdf5/n5/klb are preferable).  But for data that begins as a folder of tiffs, tifffolder simplifies the process of parsing that folder into data along different axes (and could be used as an intermediate step in the coversion to a better format if desired).
 
 ### Install with pip
 
