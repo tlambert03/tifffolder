@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Lazily read a subset of data from a folder of images using numpy slicing syntax.  Includes simplified but robust file pattern matching syntax and multithreaded file reading.
+Lazily read a subset of data from a folder of images using numpy slicing syntax.  Includes simplified but robust file pattern matching syntax and multithreaded file reading.  Note: this is not intended to promote a folder of tiffs as a useful way to store lots of information (things like hdf5/n5/klb are preferable).  But for data that begins as a folder of tiffs, tifffolder simplifies the process of parsing that folder into data along different axes (and could be used as an intermediate step in the coversion to a better format if desired).
 
 ### Install with pip
 
@@ -67,14 +67,14 @@ True
 tifffolder converts a simplified regex syntax into relatively robust lookahead regex that will match patterns in any order in the filename or fail elegantly.
 
 The TiffFolder class accepts a `patterns` parameter (dict or list of two-tuples).  For each (key, value) in the `patterns` dict:
-* key = the axes name (`'x', 'y', 'z', 'c', 't', 's'` are recognized)
+* key = the axis name (e.g. `'x', 'y', 'z', 'c', 't', 's'`)
 * value = the simplified regex where:
     - things in brackets `{}` will be captured
-    - things outside of brackest will be required to match
+    - things outside of brackest will be required to match, but not captured
     - `{d}` means match any number of digits
     - `{D}` means match any number of NON-digits
     - `{}` means match any alphanumeric character (excluding underscore)
-    - `{d2}` will match exactly two digits
+    - `{d2}` means match exactly two digits (for example)
 
 
 For example:
