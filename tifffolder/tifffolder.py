@@ -14,17 +14,20 @@ logger = logging.getLogger(__name__)
 
 def imshow(data, *args, **kwargs):
     """ tifffile.imshow with my preferred settings """
-    import matplotlib.pyplot as plt
-    if 'photometric' not in kwargs:
-        kwargs['photometric'] = 'MINISBLACK'
-    if 'cmap' not in kwargs:
-        kwargs['cmap'] = 'gray'
-    if 'vmin' not in kwargs:
-        kwargs['vmin'] = data.min()
-    if 'vmax' not in kwargs:
-        kwargs['vmax'] = data.max()
-    tifffile.imshow(data, *args, **kwargs)
-    plt.show()
+    try:
+        import matplotlib.pyplot as plt
+        if 'photometric' not in kwargs:
+            kwargs['photometric'] = 'MINISBLACK'
+        if 'cmap' not in kwargs:
+            kwargs['cmap'] = 'gray'
+        if 'vmin' not in kwargs:
+            kwargs['vmin'] = data.min()
+        if 'vmax' not in kwargs:
+            kwargs['vmax'] = data.max()
+        tifffile.imshow(data, *args, **kwargs)
+        plt.show()
+    except ImportError:
+        print('could not import matplotlib, cannot show image')
 
 
 def imread(*args, **kwargs):
@@ -152,6 +155,7 @@ class TiffFolder(object):
                             .format(ax) + '  Ignoring.')
                 self._axes = self._axes.replace(ax, '')
         self.maxworkers = maxworkers
+        self._shapedict = None  # will hold the shape of each axis in the data
         self._parse()
 
     class ParseError(Exception):
@@ -281,7 +285,7 @@ class TiffFolder(object):
             # FIX ME: ASSUMING THAT FILES ARE Z STACKS FOR NOW
             try:
                 stacks[stack_idx] = data
-            except ValueError as e:
+            except ValueError:
                 if data.shape != stacks[stack_idx].shape:
                     try:
                         # quick way to rotate the image if XY and
