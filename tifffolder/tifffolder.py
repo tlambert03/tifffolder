@@ -62,6 +62,36 @@ def mode1(x):
     return values[m]
 
 
+class InfoArray(np.ndarray):
+    """ Subclass of np.ndarray that can have attributes added to it
+
+    Specifically, self.transpose() is aware of an "axes" attribute, which
+    is added by TiffFolder.asarray(), and will reorder axes when np.transpose
+    is called.
+    """
+
+    def __new__(cls, input_array, dtype=np.uint16, **kwargs):
+        obj = np.asarray(input_array, dtype=dtype).view(cls)
+        for k, v in kwargs.items():
+            setattr(obj, k, v)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+
+    def __repr__(self):
+        return str(self) + '\n' + '{}'.format(self.__dict__)
+
+    def transpose(self, *axes):
+        """ If this array has an axes attribute, rearrange it and return """
+        transposed = super(InfoArray, self).transpose(*axes)
+        if hasattr(self, 'axes'):
+            _ax = ''.join([self.axes[i] for i in tuple(*axes)])
+            return InfoArray(transposed, axes=_ax)
+        return InfoArray(transposed)
+
+
 def build_regex(label, easyreg):
     """ Convert a string with simplified syntax into lookahead regex.
 
@@ -293,8 +323,8 @@ class TiffFolder(object):
                                               for x in data.shape])
                         stacks[stack_idx] = data
                     except ValueError as e:
-                        raise self.ShapeError('Error adding file {} to array: '
-                                      .format(os.path.basename(fpath)) + str(e))
+                        raise self.ShapeError('Error adding file {} to array: {}'
+                                              .format(os.path.basename(fpath), e))
 
         # actually read the files, in parallel if requested
         if maxworkers < 2:
@@ -311,7 +341,8 @@ class TiffFolder(object):
         if 'x' in axes_selections and requested_nx != self._shapedict['x']:
             stacks = stacks[:, :, :, :, :, axes_selections['x']]
 
-        return np.squeeze(stacks)
+        axes = ''.join([k for k, v in axes_selections.items() if len(v) > 1])
+        return InfoArray(np.squeeze(stacks), axes=axes)
 
     def __len__(self):
         return self.shape[0]
