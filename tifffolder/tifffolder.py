@@ -8,7 +8,7 @@ import tifffile
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import cpu_count
 from collections import defaultdict, OrderedDict
-
+from .axesarray import AxesArray, validate_newaxes
 logger = logging.getLogger(__name__)
 
 
@@ -60,36 +60,6 @@ def mode1(x):
     values, counts = np.unique(x, return_counts=True)
     m = counts.argmax()
     return values[m]
-
-
-class InfoArray(np.ndarray):
-    """ Subclass of np.ndarray that can have attributes added to it
-
-    Specifically, self.transpose() is aware of an "axes" attribute, which
-    is added by TiffFolder.asarray(), and will reorder axes when np.transpose
-    is called.
-    """
-
-    def __new__(cls, input_array, dtype=np.uint16, **kwargs):
-        obj = np.asarray(input_array, dtype=dtype).view(cls)
-        for k, v in kwargs.items():
-            setattr(obj, k, v)
-        return obj
-
-    def __array_finalize__(self, obj):
-        if obj is None:
-            return
-
-    def __repr__(self):
-        return str(self) + '\n' + '{}'.format(self.__dict__)
-
-    def transpose(self, *axes):
-        """ If this array has an axes attribute, rearrange it and return """
-        transposed = super(InfoArray, self).transpose(*axes)
-        if hasattr(self, 'axes'):
-            _ax = ''.join([self.axes[i] for i in tuple(*axes)])
-            return InfoArray(transposed, axes=_ax)
-        return InfoArray(transposed)
 
 
 def build_regex(label, easyreg):
@@ -208,19 +178,9 @@ class TiffFolder(object):
         return ''.join((k for k, v in self._shapedict.items() if v > 1))
 
     @axes.setter
-    def axes(self, ax_string):
-        for char in ax_string:
-            if char not in self.axes:
-                raise ValueError('Axes "{}" not in TiffFolder with axes "{}"'
-                                 .format(char, self.axes))
-        if len(ax_string) != len(self.axes):
-            raise ValueError('Cannot change TiffFolder dimensions from "{}" to "{}".'
-                             .format(len(self.axes), len(ax_string)))
-        if not set(ax_string) == set(self.axes):
-            raise ValueError('Error: unassigned axes: {}'
-                             .format(set(self.axes) - set(ax_string)))
-
-        self._shapedict = OrderedDict([(ax, self._shapedict[ax]) for ax in ax_string])
+    def axes(self, new_axes):
+        validate_newaxes(self.axes, new_axes)
+        self._shapedict = OrderedDict([(ax, self._shapedict[ax]) for ax in new_axes])
 
     @property
     def ndim(self):
@@ -342,7 +302,7 @@ class TiffFolder(object):
             stacks = stacks[:, :, :, :, :, axes_selections['x']]
 
         axes = ''.join([k for k, v in axes_selections.items() if len(v) > 1])
-        return InfoArray(np.squeeze(stacks), axes=axes)
+        return AxesArray(np.squeeze(stacks), axes=axes)
 
     def __len__(self):
         return self.shape[0]
