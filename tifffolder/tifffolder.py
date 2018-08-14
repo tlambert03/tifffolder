@@ -390,7 +390,8 @@ class TiffFolder(object):
                 # there is a different number of items in this axis
                 # across channels.
                 self._symmetrical = False
-            self._axsets[ax] = sorted(set().union(*ax_sets))
+            self._axsets[ax] = sorted(set().union(*ax_sets),
+                                      key=lambda x: (x is None, x))
             SHP[ax] = len(self._axsets[ax]) or 1
 
         # the file_array will hold all of the filenames seperated and arranged
