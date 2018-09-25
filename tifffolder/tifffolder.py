@@ -271,8 +271,10 @@ class TiffFolder(object):
         def read_file(zipped_idx):
             stack_idx, f_array_idx = zipped_idx
             fpath = self._file_array[f_array_idx]
-            data = imread(fpath, key=axes_selections.get('z', None))
-            # FIX ME: ASSUMING THAT FILES ARE Z STACKS FOR NOW
+            if self._tiff3d:
+                data = imread(fpath, key=axes_selections.get('z', None), is_ome=False)
+            else:
+                data = imread(fpath, is_ome=False)
             try:
                 stacks[stack_idx] = data
             except ValueError:
@@ -283,6 +285,8 @@ class TiffFolder(object):
                                               for x in data.shape])
                         stacks[stack_idx] = data
                     except ValueError as e:
+                        print(data.shape)
+                        print(stacks[stack_idx].shape)
                         raise self.ShapeError('Error adding file {} to array: {}'
                                               .format(os.path.basename(fpath), e))
 
@@ -424,13 +428,20 @@ class TiffFolder(object):
         # dimensions
         try:
             with TiffFile(str(self.files[0])) as first_tiff:
-                SHP['z'] = len(first_tiff.pages)
-                self._tiff3d = True if SHP['z'] > 1 else False
+                self._tiff3d = False
+                if len(first_tiff.pages) > 1:
+                    self._tiff3d = True
+                    SHP['z'] = len(first_tiff.pages)
                 SHP['y'] = first_tiff.pages[0].imagelength
                 SHP['x'] = first_tiff.pages[0].imagewidth
                 self.dtype = first_tiff.pages[0].dtype
         except Exception as e:
             raise self.ParseError('Could not get TIFF information: {}'.format(e))
+
+        if self._tiff3d and 'z' in [k.lower() for k in self.patterns.keys()]:
+            raise self.ShapeError('Images are 3D (Z) stacks, but z was also '
+                                  'specified in the filepatterns. Please remove '
+                                  '"z" from the provided filename patterns')
 
         self._shapedict = OrderedDict(SHP)
 
