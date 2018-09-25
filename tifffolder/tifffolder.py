@@ -421,8 +421,10 @@ class TiffFolder(object):
         if self.list_excluded():
             logger.warn('WARNING: {} files were excluded during parsing. '
                         .format(len(self.list_excluded())) +
+                        ' Provided patterns may not match files '
+                        'or axes parameter may not match patterns. '
                         'Use TiffFolder.list_excluded() to show excluded '
-                        'files. Provided patterns may not match files.')
+                        'files.')
 
         # peek into the header of the first file in the list to get file
         # dimensions
