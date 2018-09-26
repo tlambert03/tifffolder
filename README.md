@@ -12,9 +12,24 @@ $ pip install tifffolder
 
 ### Install with conda
 
-```bash
-$ conda install -c talley tifffolder
+Installing `tifffolder` from the `conda-forge` channel can be achieved by adding `conda-forge` to your channels with:
+
 ```
+conda config --add channels conda-forge
+```
+
+Once the `conda-forge` channel has been enabled, `tifffolder` can be installed with:
+
+```
+conda install tifffolder
+```
+
+It is possible to list all of the versions of `tifffolder` available on your platform with:
+
+```
+conda search tifffolder --channel conda-forge
+```
+
 
 ### Usage
 
