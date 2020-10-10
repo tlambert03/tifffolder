@@ -8,7 +8,7 @@
     :license: MIT, see LICENSE for more details.
 """
 
-__version__ = '0.1.7'
+__version__ = '0.1.8'
 
 from .tifffolder import TiffFolder, LLSFolder, MetamorphFolder, build_regex, imshow
 from .axesarray import AxesArray
